@@ -277,7 +277,7 @@ class LPLModel(nn.Module):
                     self.update_all()
                     self.apply_constraints()
                     
-                print("   epoch %d end!"%(i))
+                # print("   epoch %d end!"%(i))
 
         if self.stored:
             utils.write_to_file(self.store_out, "outs/out" + self.filename)

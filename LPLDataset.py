@@ -3,13 +3,14 @@ from stork.generators import DataGenerator
 import torch
 import numpy as np
 
-def get_random_signal(period=10.0, alpha=1.5, nb_repeats=11, dt=10e-3, cutoff=128, seed=42):
+def get_random_signal(rng, period=10.0, alpha=1.5, nb_repeats=11, dt=10e-3, cutoff=128):
     """
     Generates a random signal based on a superposition of sinusoidal components. 
     Each component has a random amplitude and phase shift. The signal is designed 
     to model instantaneous firing rates, such as those in neurons.
 
     Parameters:
+    - rng (np.random.Generator): Random number generator object.
     - period (float): Period of the sinusoidal components.
     - alpha (float): Damping factor for the amplitude of higher frequency components.
     - nb_repeats (int): Number of times the period is repeated in the signal.
@@ -22,8 +23,8 @@ def get_random_signal(period=10.0, alpha=1.5, nb_repeats=11, dt=10e-3, cutoff=12
     - signal (ndarray): The generated signal as an array of values corresponding to 'times'.
     """
 
-    # Set the random seed for reproducibility
-    np.random.seed(seed)
+    # # Set the random seed for reproducibility
+    # np.random.seed(seed)
 
     # Randomly generate parameters for each sinusoid (amplitude and phase shift)
     theta = np.random.rand(cutoff, 2)
@@ -49,13 +50,62 @@ def get_random_signal(period=10.0, alpha=1.5, nb_repeats=11, dt=10e-3, cutoff=12
     # Return the times and the corresponding signal
     return times, signal
 
+
+
+
+def split_data_by_time(data, split_duration):
+    """
+    Splits data into segments based on a specified time duration.
+    
+    Parameters:
+    - data: numpy array of shape (n, m), where n is the number of data points and m is the number of features.
+            It is assumed that the first column contains the timestamps.
+    - split_duration: the duration for each split segment.
+    
+    Returns:
+    - splits: a list of numpy arrays, each containing the data within a specific time segment.
+    """
+    
+    # Find the maximum time in the data
+    max_time = data[:, 0].max()
+    
+    # Initialize a list to hold the split data segments
+    splits = []
+    
+    # Initialize the start time for the first segment
+    start_time = 0
+    
+    # Loop to split the data until the start time exceeds the maximum time
+    while start_time < max_time:
+        # Define the end time for the current segment
+        end_time = start_time + split_duration
+        
+        # Create a mask to select data within the current time segment
+        mask = (data[:, 0] >= start_time) & (data[:, 0] < end_time)
+        
+        # Extract the data for the current time segment based on the mask
+        split_data = data[mask]
+        
+        # Adjust the timestamps to be relative to the start time of the current segment
+        split_data[:, 0] -= start_time
+        
+        # Add the current time segment data to the list of splits
+        splits.append(split_data)
+        
+        # Update the start time to move to the next segment
+        start_time = end_time
+    
+    return splits
+
+
+
         
 class FileModulatedPoissonGroup():
     """
     A class to generate Poisson spike trains modulated by time-varying firing rates read from a file.
     """
 
-    def __init__(self, time_step=2e-3, loop_mode=True, seed=42):
+    def __init__(self, time_step=2e-3, loop_mode=True, seed=123):
         """
         Initializes the Poisson group with specific simulation parameters.
 
@@ -111,7 +161,7 @@ class FileModulatedPoissonGroup():
             r = self.exponential_random() / self.lambda_
             self.x = int(r / self.dt + 0.5)
         else:
-            self.x = int(4e9)  # Use a very high number to effectively disable spiking
+            self.x = int(6e9)  # Use a very high number to effectively disable spiking
 
     def poisson_evolve(self, cur_clock):
         """
@@ -198,6 +248,7 @@ class FileModulatedPoissonGroup():
             spkfile.write("%e %i\n" % (t, i))
         spkfile.close()
 
+    
     
 class LPLDataset(Dataset):
     """

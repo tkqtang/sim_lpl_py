@@ -135,6 +135,12 @@ class LPLGroup(CellGroup):
         indices = (out == 1.0)
         return out, indices
 
+    def random_mem(self, mean=-60e-3, sigma=10e-3, seed=42):
+        torch.manual_seed(seed)
+        tensor = torch.normal(mean=mean, std=sigma, size=self.mem.shape, device=self.device, dtype=self.dtype)
+        self.mem = tensor
+    
+
     def forward(self):
 
          
