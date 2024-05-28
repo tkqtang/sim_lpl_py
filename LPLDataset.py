@@ -161,7 +161,7 @@ class FileModulatedPoissonGroup():
             r = self.exponential_random() / self.lambda_
             self.x = int(r / self.dt + 0.5)
         else:
-            self.x = int(6e9)  # Use a very high number to effectively disable spiking
+            self.x = int(4e9)  # Use a very high number to effectively disable spiking
 
     def poisson_evolve(self, cur_clock):
         """

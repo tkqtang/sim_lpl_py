@@ -8,38 +8,39 @@ from stork.connections import Connection as Con
 
 class LPLConnection(Con):
     """
-        Initializes the LPLConnection class.
-        
-        Parameters:
-        - src: Source
-        - dst: Destination
-        - lamda_: Lambda parameter, dicede whether to use Hebb rule.
-        - phi: Phi parameter, dicede whether to use Pred rule.
-        - tau_mem: Membrane time constant.
-        - tau_syn: Synaptic time constant.
-        - tau_post_mean: Post-synaptic mean time constant.
-        - tau_var: Variance time constant.
-        - tau_el_rise: EL rise time constant.
-        - tau_el_decay: EL decay time constant.
-        - tau_rms: RMS time constant.
-        - delta_time: Time for delta, it is used by Pred rule.
-        - connection_prob: Probability of connection between neurons.
-        - initial_weight: Initial weight value.
-        - timestep_rmsprop_updates: Time step for RMSProp updates.
-        - lr: Learning rate.
-        - delta: Delta parameter.
-        - epsilon: Epsilon parameter.
-        - operation: Neural network operation, default is nn.Linear.
-        - evolved: Boolean to indicate if evolved.
-        - target: Target layer or output.
-        - bias: Boolean to indicate if bias is used.
-        - requires_grad: Boolean to indicate if gradients are required.
-        - propagate_gradients: Boolean to indicate if gradients are propagated.
-        - flatten_input: Boolean to indicate if input should be flattened.
-        - name: Name of the connection.
-        - regularizers: Regularizers for the connection.
-        - constraints: Constraints for the connection.
-        - **kwargs: Additional arguments.
+    LPLConnection class implementation.
+    
+    Parameters:
+    - src: Source group of neurons.
+    - dst: Destination group of neurons.
+    - lamda_: Lambda parameter, used to determine the application of the Hebbian rule.
+    - phi: Phi parameter, used to determine the application of the Predictive rule.
+    - tau_mem: Membrane time constant.
+    - tau_syn: Synaptic time constant.
+    - tau_post_mean: Time constant for the post-synaptic mean.
+    - tau_var: Variance time constant.
+    - tau_el_rise: EL rise time constant.
+    - tau_el_decay: EL decay time constant.
+    - tau_rms: RMS time constant.
+    - delta_time: Delta time, used in the Predictive rule.
+    - delay_time: Delay in synaptic transmission
+    - connection_prob: Probability of forming a connection between neurons.
+    - initial_weight: Initial weight value for connections.
+    - timestep_rmsprop_updates: Time step for RMSProp updates.
+    - lr: Learning rate.
+    - delta: Delta parameter for weight updates.
+    - epsilon: Epsilon parameter for numerical stability.
+    - operation: Neural network operation (default is nn.Linear).
+    - evolved: Boolean indicating if the connection evolves over time.
+    - target: Target layer or output.
+    - bias: Boolean indicating if the operation includes a bias term.
+    - requires_grad: Boolean indicating if gradients are required for the weights.
+    - propagate_gradients: Boolean indicating if gradients should be propagated through the network.
+    - flatten_input: Boolean indicating if the input should be flattened.
+    - name: Name of the connection.
+    - regularizers: Regularizers applied to the connection.
+    - constraints: Constraints applied to the connection.
+    - **kwargs: Additional arguments.
     """
 
     def __init__(
@@ -62,6 +63,7 @@ class LPLConnection(Con):
         lr=1e-2,
         beta=1.0/1e-3,
         delta=1e-5,
+        delay_time=8e-4,
         epsilon=1e-3,
         operation=nn.Linear,
         evolved=False,
@@ -106,7 +108,7 @@ class LPLConnection(Con):
         self.delta = delta
         self.epsilon = epsilon
         self.delta_time = delta_time
-
+        self.delay_time = delay_time
 
         self.w_val = None
         self.el_val = None
@@ -145,13 +147,33 @@ class LPLConnection(Con):
         self.init_weight()
         self.zero_mask = (self.op.weight.data == 0.0)
 
-        self.store_post_out = []
-        self.store_post_out_len = int(self.delta_time/time_step) + 1
-        for i in range(self.store_post_out_len):
+        self.delay_post_len = int(self.delta_time/time_step) + 1
+        self.delay_post = []
+        for i in range(self.delay_post_len):
             tmp = torch.zeros_like(self.dst.out, dtype=dtype, device=device)
-            self.store_post_out.append(tmp)
+            self.delay_post.append(tmp)
         self.store_idx = 0
         self.choose_idx = 1
+
+
+
+
+        self.delay_list_len = int(self.delay_time / time_step) + 1
+        self.delay_list = []
+        for i in range(self.delay_list_len):
+            tmp1 = torch.zeros_like(self.src.out, dtype=dtype, device=device)
+            tmp2 = torch.zeros_like(self.dst.out, dtype=dtype, device=device)
+            self.delay_list.append([tmp1, tmp2])
+        self.delay_list_store_idx = 0
+        self.delay_lsit_choose_idx = 1      
+
+        self.delay_pre = []
+        for i in range(self.delay_list_len):
+            tmp = torch.zeros_like(self.src.out, dtype=dtype, device=device)
+            self.delay_pre.append(tmp)
+        self.delay_pre_store_idx = 0
+        self.delay_pre_choose_idx = 1
+
 
         self.trace_pre = torch.zeros_like(self.src.out, dtype=dtype, device=device)
         self.trace_pre_psp = torch.zeros_like(self.src.out, dtype=dtype, device=device)
@@ -197,6 +219,7 @@ class LPLConnection(Con):
 
         self.rms_mul = torch.exp(-1.0 * time_step * self.timestep_rmsprop_updates / tau_rms)
 
+        self.a = torch.ones_like(self.src.out, device=self.device, dtype=self.dtype)
 
     def set_evolve(self, evolved=True):
         self.evolved = evolved
@@ -209,7 +232,12 @@ class LPLConnection(Con):
         err = self.dst.out - self.follow_post_mean * self.trace_post_mean 
         tmp = self.trace_post_sigma2 + self.epsilon
         err = self.lamda_ * (err.div(tmp)) + self.delta
-        self.err = err - self.phi * self.dst.out + self.phi * self.store_post_out[self.choose_idx]
+        self.err = err - self.phi * self.dst.out + self.phi * self.delay_post[self.choose_idx]
+
+        self.delay_post[self.store_idx] = self.dst.out
+        self.store_idx = self.choose_idx
+        self.choose_idx = (self.choose_idx + 1) % self.delay_post_len
+
 
     def instantaneous_partial(self):
         """
@@ -219,16 +247,27 @@ class LPLConnection(Con):
         self.partial = self.beta / (1.0 + h.abs()).pow(2)
 
     def forward(self):
-        preact = self.src.out
-        if not self.propagate_gradients:
-            preact = preact.detach()
-        if self.flatten_input:
-            shp = preact.shape
-            preact = preact.reshape(shp[:1] + (-1,))
-
+        preact = self.delay_pre[self.delay_pre_choose_idx]
         out = self.op(preact)
         self.dst.add_to_state(self.target, out)
     
+    def process_plasticity(self):
+        """
+        Process the plasticity of the connection.
+        """
+        psp = self.delay_list[self.delay_lsit_choose_idx][0]
+        sigma_prime = self.delay_list[self.delay_lsit_choose_idx][1]
+        self.el_val = self.el_val + sigma_prime.T @ psp
+        self.el_val_flt = self.el_val_flt + self.follow_el_val_decay * (self.el_val - self.el_val_flt)
+        self.el_val = self.scale_el_val * self.el_val
+
+        self.instantaneous_partial()
+        self.delay_list[self.delay_list_store_idx][0] = self.trace_pre_psp
+        self.delay_list[self.delay_list_store_idx][1] = self.partial
+        self.delay_list_store_idx = self.delay_list_store_idx
+        self.delay_lsit_choose_idx = (self.delay_lsit_choose_idx + 1) % self.delay_list_len
+
+        self.el_sum += self.el_val_flt * (self.trace_err_flt.T @ self.a)
 
     def evolve(self):       
         """
@@ -236,26 +275,12 @@ class LPLConnection(Con):
         """
         if self.evolved:
         
-            psp = self.trace_pre_psp
-            sigma_prime = self.partial
-            self.el_val = self.el_val + sigma_prime.T @ psp
-            self.el_val = self.scale_el_val * self.el_val
-            self.el_val_flt = self.el_val_flt + self.follow_el_val_decay * (self.el_val - self.el_val_flt)
-            
-
-            a = torch.ones_like(self.src.out, device=self.device, dtype=self.dtype)
-            self.el_sum += self.el_val_flt * (self.trace_err_flt.T @ a)
-        
-
-
             self.compute_err()
-            self.store_post_out[self.store_idx] = self.dst.out.detach()
-            self.choose_idx = (self.choose_idx + 1) % self.store_post_out_len
-            self.store_idx = (self.store_idx + 1) % self.store_post_out_len
-        
-            self.instantaneous_partial()
+
+            self.process_plasticity()
+            
             # evolve_trace
-            self.trace_pre = self.scl_pre * (self.trace_pre + self.src.out)
+            self.trace_pre = self.scl_pre * (self.trace_pre + self.delay_pre[self.delay_pre_choose_idx])
             self.trace_post_mean = self.scl_post_mean * (self.trace_post_mean + self.dst.out)
 
             # evolve state vector
@@ -287,7 +312,9 @@ class LPLConnection(Con):
         """
         self.forward()
         self.evolve()
-        
+        self.delay_pre[self.delay_pre_store_idx] = self.src.out.detach()
+        self.delay_pre_store_idx = self.delay_pre_choose_idx
+        self.delay_pre_choose_idx = (self.delay_pre_choose_idx + 1) % self.delay_list_len           
 
 
 
@@ -298,15 +325,16 @@ class Connection(Con):
     including random initialization with uniform or Gaussian distributions.
 
     Attributes:
-        src (CellGroup): Source neuron group providing the input.
-        dst (CellGroup): Destination neuron group receiving the input.
-        gaussian (bool): Flag to determine if Gaussian initialization is used.
-        connection_prob (float): Probability of connection between neurons.
-        initial_weight (float): Initial weight for connections that are established.
-        sigma (float): Standard deviation for Gaussian distribution used in weight initialization.
-        operation (nn.Module): PyTorch module defining the transformation applied to input data.
-        target (str): Target state in the destination group that the operation affects.
-        bias (bool): Flag to include bias in the operation.
+    - src (CellGroup): Source neuron group providing the input.
+    - dst (CellGroup): Destination neuron group receiving the input.
+    - gaussian (bool): Flag to determine if Gaussian initialization is used.
+    - connection_prob (float): Probability of connection between neurons.
+    - initial_weight (float): Initial weight for connections that are established.
+    - delay_time(float): Delay in synaptic transmission
+    - sigma (float): Standard deviation for Gaussian distribution used in weight initialization.
+    - operation (nn.Module): PyTorch module defining the transformation applied to input data.
+    - target (str): Target state in the destination group that the operation affects.
+    - bias (bool): Flag to include bias in the operation.
     """
 
     def __init__(
@@ -317,6 +345,7 @@ class Connection(Con):
         connection_prob=0.5,
         initial_weight=0.1,
         sigma=20,
+        delay_time=8e-4,
         operation=nn.Linear,
         target=None,
         bias=False,
@@ -341,6 +370,8 @@ class Connection(Con):
         self.sigma=sigma
         self.connection_prob = connection_prob
         self.initial_weight = initial_weight
+
+        self.delay_time = delay_time
 
         self.requires_grad = requires_grad
         self.propagate_gradients = propagate_gradients
@@ -390,14 +421,16 @@ class Connection(Con):
         else:
             self.init_weight()
 
-    def forward(self):
-        preact = self.src.out
-        if not self.propagate_gradients:
-            preact = preact.detach()
-        if self.flatten_input:
-            shp = preact.shape
-            preact = preact.reshape(shp[:1] + (-1,))
+        self.delay_list_len = int(self.delay_time / time_step)  + 1
+        self.delay_pre = []
+        for i in range(self.delay_list_len):
+            tmp = torch.zeros_like(self.src.out, dtype=dtype, device=device)
+            self.delay_pre.append(tmp)
+        self.delay_pre_store_idx = 0
+        self.delay_pre_choose_idx = 1
 
+    def forward(self):
+        preact = self.delay_pre[self.delay_pre_store_idx]
         out = self.op(preact)
         self.dst.add_to_state(self.target, out)
 
@@ -406,6 +439,9 @@ class Connection(Con):
 
     def propagate(self):
         self.forward()
+        self.delay_pre[self.delay_pre_store_idx] = self.src.out
+        self.delay_pre_store_idx = self.delay_pre_choose_idx
+        self.delay_pre_choose_idx = (self.delay_pre_choose_idx + 1) % self.delay_list_len      
 
 
 class SymmetricSTDPConnection(Con):
@@ -421,6 +457,7 @@ class SymmetricSTDPConnection(Con):
         tau_stdp (float): Time constant of the STDP function, affecting the decay rate of synaptic changes.
         lr (float): Learning rate for STDP updates.
         kappa (float): Scaling factor for the target threshold in STDP calculations.
+        delay_time: Delay in synaptic transmission
         operation (nn.Module): PyTorch module defining the transformation applied to input data.
         target (str, optional): Target state in the destination group that the operation affects.
         bias (bool): Flag to include bias in the operation.
@@ -442,6 +479,7 @@ class SymmetricSTDPConnection(Con):
         tau_stdp=20e-3,
         lr=1e-2,
         kappa=10,
+        delay_time=8e-4,
         operation=nn.Linear,
         target=None,
         bias=False,
@@ -471,6 +509,8 @@ class SymmetricSTDPConnection(Con):
         self.kappa = kappa
         self.trace_pre = None
         self.trace_post = None
+        
+        self.delay_time = delay_time
 
         self.requires_grad = requires_grad
         self.propagate_gradients = propagate_gradients
@@ -504,6 +544,14 @@ class SymmetricSTDPConnection(Con):
         self.dcy_stdp = 1.0 - self.scl_stdp
         self.kappa_fudge = 2 * target * tau_stdp
 
+        self.delay_list_len = int(self.delay_time / time_step)  + 1
+        self.delay_pre = []
+        for i in range(self.delay_list_len):
+            tmp = torch.zeros_like(self.src.out, dtype=dtype, device=device)
+            self.delay_pre.append(tmp)
+        self.delay_pre_store_idx = 0
+        self.delay_pre_choose_idx = 1
+
         super().configure(batch_size, nb_steps, time_step, device, dtype)
 
 
@@ -513,6 +561,7 @@ class SymmetricSTDPConnection(Con):
         Toggles whether the connection's weight updates are active, allowing for runtime changes to plasticity.
         """
         self.evolved = evolved
+
 
 
     def evolve(self):
@@ -525,18 +574,11 @@ class SymmetricSTDPConnection(Con):
             self.op.weight.data += self.lr * (dw_pre.T @ self.src.out + self.dst.out.T @ dw_post)
             self.op.weight.data[self.zero_mask] = 0.0
 
-        self.trace_pre = self.scl_stdp * (self.trace_pre + self.src.out)
-        self.trace_post = self.scl_stdp * (self.trace_post + self.dst.out)
-
+            self.trace_pre = self.scl_stdp * (self.trace_pre + self.delay_pre[self.delay_pre_choose_idx])
+            self.trace_post = self.scl_stdp * (self.trace_post + self.dst.out)
 
     def forward(self):
-        preact = self.src.out
-        if not self.propagate_gradients:
-            preact = preact.detach()
-        if self.flatten_input:
-            shp = preact.shape
-            preact = preact.reshape(shp[:1] + (-1,))
-
+        preact = self.delay_pre[self.delay_pre_choose_idx]
         out = self.op(preact)
         self.dst.add_to_state(self.target, out)
 
@@ -546,6 +588,9 @@ class SymmetricSTDPConnection(Con):
     def propagate(self):
         self.forward()
         self.evolve()
+        self.delay_pre[self.delay_pre_store_idx] = self.src.out
+        self.delay_pre_store_idx = self.delay_pre_choose_idx
+        self.delay_pre_choose_idx = (self.delay_pre_choose_idx + 1) % self.delay_list_len
 
 
 
