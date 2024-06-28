@@ -258,7 +258,7 @@ class LPLModel(nn.Module):
         for batch in self.data_generator(dataset, **kwargs):
             return batch
 
-    def stimulate(self, dataset, epoch=1, shuffle=False):
+    def simulate(self, dataset, epoch=1, shuffle=False):
         """
         Stimulates the model with data from the dataset over a specified number of epochs.
 

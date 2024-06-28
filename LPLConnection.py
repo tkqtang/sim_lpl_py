@@ -247,7 +247,7 @@ class LPLConnection(Con):
         """
         h = (self.dst.mem - self.dst.thr_rest) * self.beta
         self.partial = self.beta / (1.0 + h.abs()).pow(2)
-        idx = self.dst.mem < -80e-3
+        idx = (self.dst.mem < -80e-3)
         self.partial[idx] = 0.0
 
     def forward(self):
