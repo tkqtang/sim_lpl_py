@@ -267,7 +267,7 @@ class LPLModel(nn.Module):
             epoch (int): Number of epochs to run the stimulation.
             shuffle (bool): Whether to shuffle the dataset.
         """
-        print("stimulate start!")
+        print("simulate start!")
 
         with torch.no_grad():
             self.prepare_data(dataset)
