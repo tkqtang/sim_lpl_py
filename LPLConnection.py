@@ -247,8 +247,7 @@ class LPLConnection(Con):
         """
         h = (self.dst.mem - self.dst.thr_rest) * self.beta
         self.partial = self.beta / (1.0 + h.abs()).pow(2)
-        idx = (self.dst.mem < -80e-3)
-        self.partial[idx] = 0.0
+
 
     def forward(self):
         preact = self.delay_pre[self.delay_pre_choose_idx]
@@ -260,7 +259,7 @@ class LPLConnection(Con):
         Process the plasticity of the connection.
         """
         psp = self.delay_list[self.delay_lsit_choose_idx][0]
-        psp[psp <= self.gamma] = 0.0
+
         sigma_prime = self.delay_list[self.delay_lsit_choose_idx][1]
         self.el_val = self.el_val + sigma_prime.T @ psp
         self.el_val_flt = self.el_val_flt + self.follow_el_val_decay * (self.el_val - self.el_val_flt)
@@ -272,7 +271,6 @@ class LPLConnection(Con):
         self.delay_list_store_idx = self.delay_lsit_choose_idx
         self.delay_lsit_choose_idx = (self.delay_lsit_choose_idx + 1) % self.delay_list_len
 
-        self.trace_err_flt[self.trace_err_flt <= self.gamma] = 0.0
         self.el_sum += self.el_val_flt * (self.trace_err_flt.T @ self.a)
 
     def evolve(self):       
